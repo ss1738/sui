@@ -87,6 +87,15 @@ pub fn sender_rebate(storage_rebate: u64, storage_rebate_rate: u64) -> u64 {
     u64::try_from(rebate).unwrap_or(u64::MAX)
 }
 
+/// Internal gas for reading `size` bytes of package inputs at `cost_per_kb` per 1,000 bytes,
+/// rounded up.
+pub fn package_read_internal_gas(size: usize, cost_per_kb: u64) -> u64 {
+    let cost = (size as u128)
+        .saturating_mul(cost_per_kb as u128)
+        .div_ceil(1000);
+    u64::try_from(cost).unwrap_or(u64::MAX)
+}
+
 pub fn half_digits_rounding(n: u64) -> u64 {
     if n < 1000 {
         return 1000;
@@ -224,4 +233,47 @@ fn test_half_digits_rounding() {
     assert_eq!(half_digits_rounding(1_999_999), 2_000_000);
     assert_eq!(half_digits_rounding(10_000_001), 10_001_000);
     assert_eq!(half_digits_rounding(100_000_001), 100_010_000);
+}
+
+#[test]
+fn test_package_read_internal_gas() {
+    assert_eq!(package_read_internal_gas(0, 150), 0);
+    assert_eq!(package_read_internal_gas(1, 150), 1);
+    assert_eq!(package_read_internal_gas(1_000, 150), 150);
+    assert_eq!(package_read_internal_gas(100_922, 150), 15_139);
+    assert_eq!(package_read_internal_gas(usize::MAX, u64::MAX), u64::MAX);
+}
+
+#[cfg(test)]
+mod package_read_tests {
+    use crate::gas::{SuiGasStatus, SuiGasStatusAPI};
+    use sui_protocol_config::ProtocolConfig;
+
+    const RGP: u64 = 1_000;
+    const BUDGET: u64 = 5_000_000_000;
+
+    fn gas_used(config: &ProtocolConfig, charge: impl FnOnce(&mut SuiGasStatus)) -> u64 {
+        let mut status = SuiGasStatus::new(BUDGET, RGP, RGP, config).unwrap();
+        charge(&mut status);
+        status.move_gas_status().gas_used_pre_gas_price()
+    }
+
+    #[test]
+    fn package_read_is_one_percent_of_object_read() {
+        let mut config = ProtocolConfig::get_for_max_version_UNSAFE();
+        config.set_obj_access_cost_read_per_package_kb_for_testing(150);
+        let size = 1_000_000;
+        let object_units = gas_used(&config, |s| s.charge_storage_read(size).unwrap());
+        let package_units = gas_used(&config, |s| s.charge_package_read(size).unwrap());
+        assert_eq!(object_units, 15_000);
+        assert_eq!(package_units, 150);
+    }
+
+    #[test]
+    fn package_read_runs_out_of_gas() {
+        let mut config = ProtocolConfig::get_for_max_version_UNSAFE();
+        config.set_obj_access_cost_read_per_package_kb_for_testing(u64::MAX);
+        let mut status = SuiGasStatus::new(BUDGET, RGP, RGP, &config).unwrap();
+        assert!(status.charge_package_read(1).is_err());
+    }
 }

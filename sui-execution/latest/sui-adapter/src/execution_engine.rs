@@ -792,7 +792,7 @@ pub(crate) mod checked {
         let mut timings: Vec<ExecutionTiming> = vec![];
 
         let result = gas_charger
-            .charge_input_objects(temporary_store)
+            .charge_input_objects(temporary_store, protocol_config)
             .map_err(Into::into)
             // Early errors fail without running the VM
             .and_then(|()| match execution_params.into_early_errors() {
@@ -1247,7 +1247,7 @@ pub(crate) mod checked {
 
             // We must charge object read here during transaction execution, because if this fails
             // we must still ensure an effect is committed and all objects versions incremented
-            let result = gas_charger.charge_input_objects_legacy(temporary_store);
+            let result = gas_charger.charge_input_objects_legacy(temporary_store, protocol_config);
 
             let result: ResultWithTimings<Mode::ExecutionResults, Mode::Error> =
                 result.map_err(|e| (e.into(), vec![])).and_then(

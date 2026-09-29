@@ -414,6 +414,7 @@ const MAINNET_USDB: &str =
 //              Merge colliding deferred-transaction entries in the consensus handler
 //              instead of overwriting (which stranded the displaced transactions).
 // Version 139: Enable forwarding addresses on devnet.
+//              Charge package inputs 1% of the per-byte object read cost on devnet.
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProtocolVersion(u64);
@@ -1700,6 +1701,10 @@ pub struct ProtocolConfig {
     // Per-byte cost of reading an object during transaction execution
     obj_access_cost_read_per_byte: Option<u64>,
 
+    // Cost per 1,000 bytes of reading a non-system package input. When unset, packages are
+    // charged `obj_access_cost_read_per_byte` like other input objects.
+    obj_access_cost_read_per_package_kb: Option<u64>,
+
     // Per-byte cost of writing an object during transaction execution
     obj_access_cost_mutate_per_byte: Option<u64>,
 
@@ -2703,6 +2708,7 @@ impl ProtocolConfig {
             base_tx_cost_per_byte: Some(0),
             package_publish_cost_per_byte: Some(80),
             obj_access_cost_read_per_byte: Some(15),
+            obj_access_cost_read_per_package_kb: None,
             obj_access_cost_mutate_per_byte: Some(40),
             obj_access_cost_delete_per_byte: Some(40),
             obj_access_cost_verify_per_byte: Some(200),
@@ -4804,6 +4810,7 @@ impl ProtocolConfig {
                 139 => {
                     if chain != Chain::Mainnet && chain != Chain::Testnet {
                         cfg.feature_flags.enable_forwarding_addresses = true;
+                        cfg.obj_access_cost_read_per_package_kb = Some(150);
                     }
                 }
                 // Use this template when making changes:

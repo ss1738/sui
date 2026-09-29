@@ -300,14 +300,24 @@ pub mod checked {
         pub fn charge_input_objects(
             &mut self,
             temporary_store: &TemporaryStore<'_>,
+            protocol_config: &ProtocolConfig,
         ) -> Result<(), ExecutionError> {
+            let separate_package_rate = protocol_config
+                .obj_access_cost_read_per_package_kb_as_option()
+                .is_some();
             temporary_store
                 .objects()
                 .iter()
                 // don't charge for loading Sui Framework or Move stdlib
                 .filter(|(id, _)| !is_system_package(**id))
-                .map(|(_, obj)| obj.object_size_for_gas_metering())
-                .try_for_each(|size| self.gas_status.charge_storage_read(size))
+                .try_for_each(|(_, obj)| {
+                    let size = obj.object_size_for_gas_metering();
+                    if separate_package_rate && obj.is_package() {
+                        self.gas_status.charge_package_read(size)
+                    } else {
+                        self.gas_status.charge_storage_read(size)
+                    }
+                })
         }
 
         pub fn charge_coin_transfers(
@@ -507,19 +517,33 @@ pub mod checked {
             pub fn charge_input_objects_legacy(
                 &mut self,
                 temporary_store: &TemporaryStore<'_>,
+                protocol_config: &ProtocolConfig,
             ) -> Result<(), ExecutionError> {
                 let objects = temporary_store.objects();
                 // TODO: Charge input object count.
                 let _object_count = objects.len();
+                let separate_package_rate = protocol_config
+                    .obj_access_cost_read_per_package_kb_as_option()
+                    .is_some();
                 // Charge bytes read
-                let total_size = temporary_store
+                let (package_size, object_size) = temporary_store
                     .objects()
                     .iter()
                     // don't charge for loading Sui Framework or Move stdlib
                     .filter(|(id, _)| !is_system_package(**id))
-                    .map(|(_, obj)| obj.object_size_for_gas_metering())
-                    .sum();
-                self.gas_status.charge_storage_read(total_size)
+                    .fold((0usize, 0usize), |(pkgs, objs), (_, obj)| {
+                        let size = obj.object_size_for_gas_metering();
+                        if separate_package_rate && obj.is_package() {
+                            (pkgs + size, objs)
+                        } else {
+                            (pkgs, objs + size)
+                        }
+                    });
+                self.gas_status.charge_storage_read(object_size)?;
+                if separate_package_rate {
+                    self.gas_status.charge_package_read(package_size)?;
+                }
+                Ok(())
             }
 
             /// Entry point for legacy gas charging.
